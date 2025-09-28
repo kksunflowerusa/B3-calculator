@@ -87,6 +87,9 @@ async function calcAll(){
     const usFee = parseFloat(String(json.rate).replace(/[^\d.]/g,''));
     if(isNaN(usFee)){ show('國內運費格式錯誤。',true); return; }
 
+    // 取得分區資訊，假設 Apps Script 回傳 key 名稱為 "zone"
+    const zone = json.zone ? json.zone : '未知分區';
+
     const totalUSD = intlFee + twFee + usFee;
 
     // 從 Apps Script 抓匯率
@@ -104,7 +107,7 @@ async function calcAll(){
     }catch(e){ console.warn('抓匯率失敗',e); }
 
     const finalRate = fxRate ? (fxRate + 0.8) : null;
-    const totalTWD = finalRate ? Math.ceil(totalUSD * finalRate) : 'N/A'; // ✅ 無條件進位
+    const totalTWD = finalRate ? Math.ceil(totalUSD * finalRate) : 'N/A';
     const rateDisplay = finalRate ? finalRate.toFixed(3) : 'N/A';
 
     const today = new Date().toLocaleDateString('zh-TW');
@@ -118,6 +121,7 @@ async function calcAll(){
       1️⃣ 國際運費：$${intlFee.toFixed(2)}<br/>
       2️⃣ TW 服務費(未超過20lbs)：$${twFee.toFixed(2)}<br/>
       3️⃣ 美國國內運費：$${usFee.toFixed(2)}<br/>
+      📍 分區：${zone}<br/>
       ──────────────<br/>
       <b>總運費：$${totalUSD.toFixed(2)}</b><br/><br/>
       💱 台幣總金額：約 NT$${totalTWD}<br/>
@@ -132,4 +136,3 @@ async function calcAll(){
 </script>
 </body>
 </html>
-
