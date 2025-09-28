@@ -38,10 +38,11 @@
 <div id="output" class="result" style="display:none;"></div>
 
 <script>
-const API_URL = 'https://script.google.com/macros/s/AKfycbz8MZ8WBqekZF8JtaEthyFDmzz6KhxtzSFXM3L8nByU_wtQaQKkM3lXGiwu9jXMw8aOtw/exec'; // ←改成實際部署的 Apps Script URL
-const INTERNATIONAL_RATE = 3.99; // USD per lb
-const SERVICE_FEE_THRESHOLD = 20; // lb
-const SERVICE_FEE = 6; // USD
+const API_URL = 'https://script.google.com/macros/s/AKfycbz8MZ8WBqekZF8JtaEthyFDmzz6KhxtzSFXM3L8nByU_wtQaQKkM3lXGiwu9jXMw8aOtw/exec';
+const FX_URL  = 'https://script.google.com/macros/s/AKfycbxIiNX4edi5eqyMPKnCnj0sohXVM9R2PtzRDSParjSHuLlT2eLwY8CQRJMzFVGsKWzq/exec';
+const INTERNATIONAL_RATE = 3.99;
+const SERVICE_FEE_THRESHOLD = 20;
+const SERVICE_FEE = 6;
 
 function show(msg, isErr=false){
   const out = document.getElementById('output');
@@ -52,7 +53,7 @@ function show(msg, isErr=false){
 
 function ceil(n){ return Math.ceil(Number(n)); }
 
-function calcAll(){
+async function calcAll(){
   const len = Number(document.getElementById('lenCm').value);
   const wid = Number(document.getElementById('widCm').value);
   const hei = Number(document.getElementById('heiCm').value);
@@ -66,7 +67,6 @@ function calcAll(){
     show('請輸入 5 位數 Zip code。',true); return;
   }
 
-  // ---- 1️⃣ 計算材積重與實際重量 ----
   const lIn = ceil(len/2.54);
   const wIn = ceil(wid/2.54);
   const hIn = ceil(hei/2.54);
@@ -75,40 +75,61 @@ function calcAll(){
   const chargeWeight = Math.max(volWeight, realWeight);
 
   const intlFee = chargeWeight * INTERNATIONAL_RATE;
-  const twFee = chargeWeight <= SERVICE_FEE_THRESHOLD ? SERVICE_FEE : 0;
+  const twFee   = chargeWeight <= SERVICE_FEE_THRESHOLD ? SERVICE_FEE : 0;
 
   show('計算中…');
 
-  fetch(`${API_URL}?zip=${encodeURIComponent(zip)}&weight=${chargeWeight}`)
-    .then(r=>r.json())
-    .then(resp=>{
-      if(!resp.success){
-        show('國內運費錯誤：'+resp.message,true); return;
+  try {
+    // 美國國內運費
+    const resp = await fetch(`${API_URL}?zip=${encodeURIComponent(zip)}&weight=${chargeWeight}`);
+    const json = await resp.json();
+    if(!json.success){ show('國內運費錯誤：'+json.message,true); return; }
+    const usFee = parseFloat(String(json.rate).replace(/[^\d.]/g,''));
+    if(isNaN(usFee)){ show('國內運費格式錯誤。',true); return; }
+
+    const totalUSD = intlFee + twFee + usFee;
+
+    // 從 Apps Script 抓匯率
+    let fxRate = null;
+    try{
+      const fxResp = await fetch(FX_URL);
+      const fxJson = await fxResp.json();
+      const keys = ['rate','Rate','usdToTwd','USDTWD','twd','TWD','usdClose'];
+      for(const k of keys){
+        if(fxJson[k]!==undefined){
+          fxRate = parseFloat(fxJson[k]);
+          if(!isNaN(fxRate)) break;
+        }
       }
+    }catch(e){ console.warn('抓匯率失敗',e); }
 
-      // ★ 關鍵修正：解析為純數字
-      const usFee = parseFloat(String(resp.rate).toString().replace(/[^\d.]/g,''));
-      if(isNaN(usFee)){
-        show('國內運費格式錯誤，請檢查試算表數據。',true); return;
-      }
+    const finalRate = fxRate ? (fxRate + 0.8) : null;
+    const totalTWD = finalRate ? Math.ceil(totalUSD * finalRate) : 'N/A'; // ✅ 無條件進位
+    const rateDisplay = finalRate ? finalRate.toFixed(3) : 'N/A';
 
-      const total = intlFee + twFee + usFee;
+    const today = new Date().toLocaleDateString('zh-TW');
 
-      show(`
-        <strong>計算結果</strong><br/>
-        ──────────────<br/>
-        材積重：${volWeight} lb<br/>
-        實際重：${realWeight} lb<br/>
-        <b>計費磅數：${chargeWeight} lb</b><br/><br/>
-        1️⃣ 國際運費：$${intlFee.toFixed(2)}<br/>
-        2️⃣ TW 服務費(若未超過20磅)：$${twFee.toFixed(2)}<br/>
-        3️⃣ 美國國內運費：$${usFee.toFixed(2)}<br/>
-        ──────────────<br/>
-        <b>總運費：$${total.toFixed(2)}</b>
-      `);
-    })
-    .catch(err=>show('發生錯誤：'+err,true));
+    show(`
+      <strong>計算結果</strong><br/>
+      ──────────────<br/>
+      材積重：${volWeight} lb<br/>
+      實際重：${realWeight} lb<br/>
+      <b>計費磅數：${chargeWeight} lb</b><br/><br/>
+      1️⃣ 國際運費：$${intlFee.toFixed(2)}<br/>
+      2️⃣ TW 服務費(未超過20lbs)：$${twFee.toFixed(2)}<br/>
+      3️⃣ 美國國內運費：$${usFee.toFixed(2)}<br/>
+      ──────────────<br/>
+      <b>總運費：$${totalUSD.toFixed(2)}</b><br/><br/>
+      💱 台幣總金額：約 NT$${totalTWD}<br/>
+      使用匯率：1 USD = NT$${rateDisplay}<br/>
+      今日日期：${today}
+    `);
+
+  } catch(err){
+    show('發生錯誤：'+err,true);
+  }
 }
 </script>
 </body>
 </html>
+
